@@ -1,0 +1,29 @@
+# channel.yaml — 頻道專屬設定
+# 複製本檔，依自己的頻道填寫，用 --channel 參數帶入
+# 範例：python poc.py input.mp4 --channel channels/myvtuber.yaml
+
+name: "頻道名稱"
+language: zh          # zh（中文）或 ja（日文）
+
+# 關鍵字 → 加分權重（命中一次加多少，建議範圍 5–30）
+keywords:
+  # 填你自己頻道的梗詞，以下是範例
+  # 神回: 30
+  # 事故: 25
+  # 初見: 15
+  # 歌枠: 20
+
+# 各訊號的全域權重（0–100，調整相對重要性）
+weights:
+  volume_spike: 20       # 音量尖峰
+  keyword_hit: 40        # 關鍵字命中（主力訊號）
+  silence_burst: 25      # 長靜音後爆發
+  repeated_word: 10      # 重複詞（Phase 2 選配）
+  speech_rate_change: 5  # 語速突變（Phase 2 選配）
+
+# highlight 篩選設定
+highlight:
+  top_n: 30              # 最多列幾個候選
+  min_score: 10          # 分數低於此不列入
+  merge_gap_sec: 5.0     # 相鄰幾秒內的高分段合併為同一段
+  padding_sec: 3.0       # 每段前後各擴幾秒

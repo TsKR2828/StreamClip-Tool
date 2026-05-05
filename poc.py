@@ -11,11 +11,13 @@ PoC: 吃一個影片/音訊檔,跑 faster-whisper + 音量峰值偵測,
     python poc.py <input.mp4> --device cpu
 
 輸出:
-    output/<hash>/transcript.md   逐字稿
-    output/<hash>/highlights.md   音量峰值 + 對應台詞
-    output/<hash>/segments.json   whisper 快取(下次不用重跑)
-    output/<hash>/audio.wav       抽完的音訊(跑完可刪)
-    output/<hash>/source.txt      原始檔名記錄
+    output/<hash>/transcript.md         逐字稿
+    output/<hash>/transcript.srt        字幕檔（SRT 格式，可丟剪輯軟體）
+    output/<hash>/highlights.md         音量峰值 + 對應台詞
+    output/<hash>/silence_bursts.json   長靜音後爆發候選清單
+    output/<hash>/segments.json         whisper 快取(下次不用重跑)
+    output/<hash>/audio.wav             抽完的音訊(跑完可刪)
+    output/<hash>/source.txt            原始檔名記錄
 """
 
 import argparse
@@ -233,6 +235,110 @@ def write_transcript(segments: list, out_md: Path, source_name: str) -> None:
     print(f"      寫出 → {out_md}")
 
 
+def write_srt(segments: list, out_srt: Path) -> None:
+    """輸出 SRT 字幕格式（HH:MM:SS,mmm），可直接匯入剪輯軟體。"""
+    def srt_ts(sec: float) -> str:
+        # 用整數毫秒運算，避免浮點數導致 ms=1000 的格式錯誤
+        total_ms = int(round(sec * 1000))
+        ms = total_ms % 1000
+        total_ms //= 1000
+        s = total_ms % 60
+        total_ms //= 60
+        m = total_ms % 60
+        h = total_ms // 60
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    lines = []
+    idx = 1
+    for seg in segments:
+        text = to_traditional(seg["text"].strip())
+        if not text:
+            continue
+        lines.append(str(idx))
+        lines.append(f"{srt_ts(seg['start'])} --> {srt_ts(seg['end'])}")
+        lines.append(text)
+        lines.append("")
+        idx += 1
+
+    # utf-8（不加 BOM），SRT 解析器大多不接受 BOM
+    out_srt.write_text("\n".join(lines), encoding="utf-8")
+    print(f"      寫出 → {out_srt}")
+
+
+def load_channel(path: Path) -> dict:
+    """載入 channel.yaml 頻道設定。path 為 None 或不存在時回傳預設值。"""
+    defaults = {
+        "name": "",
+        "language": "zh",
+        "keywords": {},
+        "weights": {
+            "volume_spike": 20,
+            "keyword_hit": 40,
+            "silence_burst": 25,
+            "repeated_word": 10,
+            "speech_rate_change": 5,
+        },
+        "highlight": {
+            "top_n": 30,
+            "min_score": 10,
+            "merge_gap_sec": 5.0,
+            "padding_sec": 3.0,
+        },
+    }
+    if path is None or not path.exists():
+        return defaults
+    import yaml
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    for key, val in defaults.items():
+        if key not in data:
+            data[key] = val
+        elif isinstance(val, dict):
+            for sub_key, sub_val in val.items():
+                data[key].setdefault(sub_key, sub_val)
+    return data
+
+
+def detect_silence_bursts(
+    segments: list,
+    gap_sec: float = 3.0,
+    min_text_chars: int = 6,
+    min_duration_sec: float = 1.5,
+    large_gap_override_sec: float = 8.0,
+) -> list:
+    """偵測長靜音後爆發：上一段結束到下一段開始超過 gap_sec 的時間點。
+
+    過濾條件（以下任一不符則排除，除非 gap >= large_gap_override_sec）：
+    - text 長度 >= min_text_chars（排除「好」「如果自己」等短句雜訊）
+    - segment 持續時長 >= min_duration_sec（排除太短的片段）
+
+    回傳: list of dict {start, end, gap_before_sec, text, reason}
+    """
+    if len(segments) < 2:
+        return []
+    sorted_segs = sorted(segments, key=lambda s: s["start"])
+    bursts = []
+    for i in range(1, len(sorted_segs)):
+        prev = sorted_segs[i - 1]
+        curr = sorted_segs[i]
+        gap = curr["start"] - prev["end"]
+        if gap < gap_sec:
+            continue
+        text = to_traditional(curr["text"].strip())
+        duration = curr["end"] - curr["start"]
+        is_large_gap = gap >= large_gap_override_sec
+        if not is_large_gap and (len(text) < min_text_chars or duration < min_duration_sec):
+            continue
+        bursts.append({
+            "start": round(curr["start"], 2),
+            "end": round(curr["end"], 2),
+            "gap_before_sec": round(gap, 2),
+            "text": text,
+            "reason": "silence_burst",
+        })
+    return bursts
+
+
 def write_highlights(peaks: list, segments: list, out_md: Path, source_name: str) -> None:
     """把音量峰值對齊逐字稿輸出。"""
     lines = [
@@ -276,7 +382,13 @@ def main():
     ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--peak-db", type=float, default=4.0,
                     help="峰值門檻(基線之上幾 dB),預設 4;命中太多可調高、太少可調低")
+    ap.add_argument("--channel", type=Path, default=None,
+                    help="頻道設定檔路徑（channels/xxx.yaml），不指定則用預設值")
     args = ap.parse_args()
+
+    channel = load_channel(args.channel)
+    if channel["name"]:
+        print(f"頻道: {channel['name']} (lang={channel['language']})")
 
     if not args.input.exists():
         sys.exit(f"找不到檔案: {args.input}")
@@ -305,6 +417,23 @@ def main():
         write_transcript(segments, out_dir / "transcript.md", args.input.name)
     except Exception:
         print(f"[錯誤] 寫入 transcript.md 失敗:")
+        traceback.print_exc()
+
+    try:
+        write_srt(segments, out_dir / "transcript.srt")
+    except Exception:
+        print(f"[錯誤] 寫入 transcript.srt 失敗:")
+        traceback.print_exc()
+
+    try:
+        bursts = detect_silence_bursts(segments)
+        bursts_path = out_dir / "silence_bursts.json"
+        bursts_path.write_text(
+            json.dumps(bursts, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"      長靜音後爆發: {len(bursts)} 處 → {bursts_path.name}")
+    except Exception:
+        print(f"[錯誤] 長靜音後爆發偵測失敗:")
         traceback.print_exc()
 
     # Step 3: 音量峰值

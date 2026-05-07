@@ -9,7 +9,7 @@ T3 ✅ 長靜音後爆發偵測
 
 T4 關鍵字打分 ← 需要 T2 + 梗詞清單
 T5 ✅ 合併訊號 ← T3 + (T4) + 音量 peaks
-T6 區段合併 ← T5
+T6 ✅ 區段合併 ← T5
 T7 highlights.csv ← T6
 ```
 
@@ -20,11 +20,6 @@ T7 highlights.csv ← T6
   - 對每個 segment.text 做全文比對，命中 → 加對應權重分
   - 輸出：segments + keyword_score 欄位
   - **前置：月月提供 channel.yaml 梗詞清單**
-
-- [ ] **T6：精華區段合併（Step 5）**
-  - 相鄰 ≤ merge_gap_sec 的候選合併
-  - 前後各擴 padding_sec
-  - 多訊號命中 → reasons 合併
 
 - [ ] **T7：highlights.csv 輸出**
   - pandas DataFrame
@@ -42,3 +37,4 @@ T7 highlights.csv ← T6
 - [x] **T2：channel.yaml loader**（2026-05-07）
 - [x] **T3：長靜音後爆發偵測**（2026-05-07）
 - [x] **T5：合併訊號成候選清單**（2026-05-07）— volume + silence 加權，T4 keyword 預留接口
+- [x] **T6：精華區段合併**（2026-05-07）— merge_gap + padding + top_n 篩選 + 逐字稿附加

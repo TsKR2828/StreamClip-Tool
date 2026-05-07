@@ -407,6 +407,92 @@ def merge_signals(
     return candidates
 
 
+def merge_highlights(
+    candidates: list,
+    segments: list,
+    channel: dict = None,
+) -> list:
+    """合併相鄰/重疊的候選區段，產出最終精華清單。
+
+    1. 按 start 排序
+    2. 相鄰候選 gap ≤ merge_gap_sec → 合併成一段
+    3. 合併後 score 取最高（同段多訊號 → reasons 合併）
+    4. 前後各擴 padding_sec
+    5. 附上對應的逐字稿片段
+    6. 按 score 降序排列，取 top_n
+
+    回傳: list of dict {rank, start, end, duration, score, reasons, transcript}
+    """
+    if channel is None:
+        channel = load_channel(None)
+    cfg = channel["highlight"]
+    merge_gap = cfg.get("merge_gap_sec", 5.0)
+    padding = cfg.get("padding_sec", 3.0)
+    top_n = cfg.get("top_n", 30)
+    min_score = cfg.get("min_score", 10)
+
+    if not candidates:
+        return []
+
+    # 1. 按 start 排序
+    sorted_cands = sorted(candidates, key=lambda c: c["start"])
+
+    # 2. 合併相鄰/重疊候選
+    merged = []
+    cur = {
+        "start": sorted_cands[0]["start"],
+        "end": sorted_cands[0]["end"],
+        "score": sorted_cands[0]["score"],
+        "reasons": list(sorted_cands[0]["reasons"]),
+    }
+    for c in sorted_cands[1:]:
+        if c["start"] <= cur["end"] + merge_gap:
+            # 合併：擴展 end、累加 score、合併 reasons
+            cur["end"] = max(cur["end"], c["end"])
+            cur["score"] = round(cur["score"] + c["score"], 1)
+            for r in c["reasons"]:
+                if r not in cur["reasons"]:
+                    cur["reasons"].append(r)
+        else:
+            merged.append(cur)
+            cur = {
+                "start": c["start"],
+                "end": c["end"],
+                "score": c["score"],
+                "reasons": list(c["reasons"]),
+            }
+    merged.append(cur)
+
+    # 3. 加 padding + 計算 duration
+    for m in merged:
+        m["start"] = max(0, m["start"] - padding)
+        m["end"] = m["end"] + padding
+        m["duration"] = round(m["end"] - m["start"], 2)
+
+    # 4. 篩選 + 排序
+    merged = [m for m in merged if m["score"] >= min_score]
+    merged.sort(key=lambda m: m["score"], reverse=True)
+    merged = merged[:top_n]
+
+    # 5. 附上逐字稿片段
+    for m in merged:
+        overlapping = [
+            s for s in segments
+            if s["end"] >= m["start"] and s["start"] <= m["end"]
+        ]
+        m["transcript"] = " ".join(
+            to_traditional(s["text"].strip()) for s in overlapping
+        )
+
+    # 6. 加 rank
+    for i, m in enumerate(merged, 1):
+        m["rank"] = i
+        m["reasons"] = ", ".join(m["reasons"])
+
+    print(f"      區段合併: {len(sorted_cands)} 候選 → {len(merged)} 段精華")
+    return merged
+
+
 def write_highlights(peaks: list, segments: list, out_md: Path, source_name: str) -> None:
     """把音量峰值對齊逐字稿輸出。"""
     lines = [
@@ -522,6 +608,14 @@ def main():
         print("[錯誤] 合併訊號失敗:")
         traceback.print_exc()
         candidates = []
+
+    # Step 5: 區段合併
+    highlights = []
+    try:
+        highlights = merge_highlights(candidates, segments, channel=channel)
+    except Exception:
+        print("[錯誤] 區段合併失敗:")
+        traceback.print_exc()
 
     print("\n完成。")
 

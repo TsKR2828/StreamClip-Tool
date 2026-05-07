@@ -3,3 +3,4 @@ numpy
 soundfile
 opencc-python-reimplemented
 pyyaml
+pandas

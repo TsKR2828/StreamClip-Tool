@@ -14,6 +14,7 @@ PoC: 吃一個影片/音訊檔,跑 faster-whisper + 音量峰值偵測,
     output/<hash>/transcript.md         逐字稿
     output/<hash>/transcript.srt        字幕檔（SRT 格式，可丟剪輯軟體）
     output/<hash>/highlights.md         音量峰值 + 對應台詞
+    output/<hash>/highlights.csv        精華候選清單（多訊號合併，Excel 可開）
     output/<hash>/silence_bursts.json   長靜音後爆發候選清單
     output/<hash>/segments.json         whisper 快取(下次不用重跑)
     output/<hash>/audio.wav             抽完的音訊(跑完可刪)
@@ -527,6 +528,31 @@ def write_highlights(peaks: list, segments: list, out_md: Path, source_name: str
     print(f"      寫出 → {out_md}")
 
 
+def write_highlights_csv(highlights: list, out_csv: Path) -> None:
+    """把合併後的精華清單寫成 CSV，方便排序篩選。"""
+    import pandas as pd
+
+    if not highlights:
+        print("      highlights.csv: 無精華段，跳過")
+        return
+
+    rows = []
+    for h in highlights:
+        rows.append({
+            "rank": h["rank"],
+            "start": fmt_ts(h["start"]),
+            "end": fmt_ts(h["end"]),
+            "duration_sec": h["duration"],
+            "score": h["score"],
+            "reasons": h["reasons"],
+            "transcript": h["transcript"][:200],  # 截斷避免 CSV 太寬
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(out_csv, index=False, encoding="utf-8-sig")  # Excel 開 CSV 需要 BOM
+    print(f"      寫出 → {out_csv} ({len(df)} 筆)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input", type=Path, help="影片或音訊檔")
@@ -615,6 +641,13 @@ def main():
         highlights = merge_highlights(candidates, segments, channel=channel)
     except Exception:
         print("[錯誤] 區段合併失敗:")
+        traceback.print_exc()
+
+    # Step 6: 輸出 highlights.csv
+    try:
+        write_highlights_csv(highlights, out_dir / "highlights.csv")
+    except Exception:
+        print("[錯誤] 寫入 highlights.csv 失敗:")
         traceback.print_exc()
 
     print("\n完成。")

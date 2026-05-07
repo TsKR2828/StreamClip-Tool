@@ -35,7 +35,7 @@
 | T4 | 關鍵字打分 | ❌ 待做 | 需要月月提供常用梗詞 |
 | T5 | 合併訊號成候選清單 | ✅ 完成 | volume + silence 加權合併，T4 keyword 預留接口 |
 | T6 | 精華區段合併（Step 5） | ✅ 完成 | 合併相鄰 ≤ merge_gap_sec + padding + top_n 篩選 |
-| T7 | highlights.csv 表格輸出 | ❌ 待做 | 依賴 T6 |
+| T7 | highlights.csv 表格輸出 | ✅ 完成 | pandas CSV（utf-8-sig for Excel）+ 逐字稿截斷 200 字 |
 
 #### Phase 2 選配（看命中率再決定）
 

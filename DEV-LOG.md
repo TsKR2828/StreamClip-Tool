@@ -25,27 +25,41 @@
 - 繁體轉換：正常
 - 結論：PoC 驗證通過,可推進 MVP
 
-### Phase 2：MVP（待做）
+### Phase 2：MVP（🔄 進行中）
+
+| ID | 項目 | 狀態 | 備註 |
+|----|------|------|------|
+| T1 | SRT 字幕輸出 | ✅ 完成 | 整數毫秒運算、無 BOM |
+| T2 | channel.yaml loader | ✅ 完成 | 深度合併預設值 + --channel CLI arg |
+| T3 | 長靜音後爆發偵測 | ✅ 完成 | 75 分鐘實測 24→18 筆（過濾雜訊） |
+| T4 | 關鍵字打分 | ❌ 待做 | 需要月月提供常用梗詞 |
+| T5 | 合併訊號成候選清單 | ❌ 待做 | 依賴 T3 + T4 + 音量 peaks |
+| T6 | 精華區段合併（Step 5） | ❌ 待做 | 依賴 T5 |
+| T7 | highlights.csv 表格輸出 | ❌ 待做 | 依賴 T6 |
+
+#### Phase 2 選配（看命中率再決定）
 
 | 項目 | 狀態 | 備註 |
 |------|------|------|
-| 關鍵字打分 | ❌ 待做 | 需要月月提供常用梗詞 |
-| 重複詞偵測 | ❌ 待做 | 短時間內同一詞出現 3+ 次 |
+| 重複詞偵測 | ❌ 待做 | 同一詞 3+ 次短時間出現 |
 | 語速突變偵測 | ❌ 待做 | 每段字/秒 vs 全場平均 |
-| 長靜音後爆發 | ❌ 待做 | segment gap > 3 秒 |
-| channel.yaml 設定檔 | ❌ 待做 | 頻道專屬關鍵字 / 權重 |
-| highlights.csv 表格輸出 | ❌ 待做 | 方便排序篩選 |
 
 ### Phase 3：進階功能（之後再說）
 
 | 項目 | 狀態 | 備註 |
 |------|------|------|
-| pyannote 說話人分離 | ❌ 待做 | 多人聯動時用 |
-| YouTube 彈幕密度分析 | ❌ 待做 | live chat replay JSON |
 | --cut-clips ffmpeg 預剪 | ❌ 待做 | 自動切精華小段 mp4 |
-| .srt 字幕輸出 | ❌ 待做 | 可匯入剪輯軟體 |
+| YouTube 彈幕密度分析 | ❌ 待做 | live chat replay JSON |
 | Ollama 標題草稿 | ❌ 待做 | 本地 LLM 給每段下標題 |
 | Premiere XML marker 輸出 | ❌ 待做 | 直接開進剪輯軟體 |
+
+### 永遠不做
+
+| 項目 | 理由 |
+|------|------|
+| pyannote 說話人分離 | 單人直播不需要 |
+| YAMNet 笑聲偵測 | 文字訊號「www / 草」夠用 |
+| GUI | CLI 足矣 |
 
 ---
 
@@ -96,7 +110,7 @@ $env:PATH = "$nv\cublas\bin;$nv\cudnn\bin;" + $env:PATH
 - 主要改靠文字訊號：關鍵字、重複詞、語速突變
 - 接 YouTube 彈幕密度（觀眾反應 = 最強訊號）
 
-**狀態**：🔄 待 Phase 2 補其他訊號
+**狀態**：🔄 待 Phase 2 T4-T5 補其他訊號
 
 ---
 
@@ -124,11 +138,23 @@ $env:PATH = "$nv\cublas\bin;$nv\cudnn\bin;" + $env:PATH
 
 ---
 
+### 🟢 P2：SRT 檔案 BOM 導致播放器無法解析
+
+**症狀**：產出的 `transcript.srt` 用媒體播放器/剪輯軟體打不開。
+
+**原因**：`write_text(encoding="utf-8-sig")` 會在檔頭加 BOM（`\xef\xbb\xbf`），大多數 SRT 解析器不接受。
+
+**解法**：改用 `encoding="utf-8"`（無 BOM）+ 整數毫秒運算避免 ms=1000 溢位。
+
+**狀態**：✅ 已修（2026-05-07）
+
+---
+
 ## 環境資訊
 
 | 項目 | 值 |
 |------|-----|
-| OS | Windows（PowerShell 5.1）|
+| OS | Windows 10 Home（PowerShell 5.1）|
 | Python | 3.13 |
 | GPU | NVIDIA RTX 3060 Ti 8GB |
 | faster-whisper | ≥1.0.0 |

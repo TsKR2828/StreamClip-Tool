@@ -5,12 +5,17 @@ output/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 .venv/
 venv/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 Thumbs.db
@@ -23,3 +28,6 @@ Desktop.ini
 *.ts
 *.wav
 *.m4a
+
+# 環境 / secrets
+.env

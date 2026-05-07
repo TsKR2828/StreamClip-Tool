@@ -33,7 +33,7 @@
 | T2 | channel.yaml loader | ✅ 完成 | 深度合併預設值 + --channel CLI arg |
 | T3 | 長靜音後爆發偵測 | ✅ 完成 | 75 分鐘實測 24→18 筆（過濾雜訊） |
 | T4 | 關鍵字打分 | ❌ 待做 | 需要月月提供常用梗詞 |
-| T5 | 合併訊號成候選清單 | ❌ 待做 | 依賴 T3 + T4 + 音量 peaks |
+| T5 | 合併訊號成候選清單 | ✅ 完成 | volume + silence 加權合併，T4 keyword 預留接口 |
 | T6 | 精華區段合併（Step 5） | ❌ 待做 | 依賴 T5 |
 | T7 | highlights.csv 表格輸出 | ❌ 待做 | 依賴 T6 |
 

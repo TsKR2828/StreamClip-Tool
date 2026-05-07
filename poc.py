@@ -339,6 +339,74 @@ def detect_silence_bursts(
     return bursts
 
 
+def merge_signals(
+    volume_peaks: list,
+    silence_bursts: list,
+    keyword_hits: list = None,
+    channel: dict = None,
+) -> list:
+    """合併所有訊號源成統一的候選清單。
+
+    每個訊號先在自身類型內 normalize 成 0-100，再乘以 channel weights。
+    候選可能在時間上重疊（merge_highlights 負責合併）。
+
+    回傳: list of dict {start, end, score, reasons}，按 start 排序
+    """
+    if channel is None:
+        channel = load_channel(None)
+    weights = channel["weights"]
+    candidates = []
+
+    # — 音量峰值 —
+    if volume_peaks:
+        max_db = max((p["db_above_baseline"] for p in volume_peaks), default=0)
+        if max_db > 0:
+            w = weights.get("volume_spike", 20)
+            for p in volume_peaks:
+                raw = p["db_above_baseline"] / max_db * 100
+                candidates.append({
+                    "start": p["start"],
+                    "end": p["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": [f"volume(+{p['db_above_baseline']:.1f}dB)"],
+                })
+
+    # — 長靜音後爆發 —
+    if silence_bursts:
+        max_gap = max((b["gap_before_sec"] for b in silence_bursts), default=0)
+        if max_gap > 0:
+            w = weights.get("silence_burst", 25)
+            for b in silence_bursts:
+                raw = b["gap_before_sec"] / max_gap * 100
+                candidates.append({
+                    "start": b["start"],
+                    "end": b["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": [f"silence({b['gap_before_sec']:.1f}s)"],
+                })
+
+    # — 關鍵字命中（T4 接入口，目前為空）—
+    if keyword_hits:
+        max_kw = max((kh["score"] for kh in keyword_hits), default=0)
+        if max_kw > 0:
+            w = weights.get("keyword_hit", 40)
+            for kh in keyword_hits:
+                raw = kh["score"] / max_kw * 100
+                candidates.append({
+                    "start": kh["start"],
+                    "end": kh["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": kh.get("reasons", ["keyword"]),
+                })
+
+    candidates.sort(key=lambda c: c["start"])
+    print(f"      訊號合併: {len(candidates)} 個候選 "
+          f"(volume={len(volume_peaks or [])}, "
+          f"silence={len(silence_bursts or [])}, "
+          f"keyword={len(keyword_hits or [])})")
+    return candidates
+
+
 def write_highlights(peaks: list, segments: list, out_md: Path, source_name: str) -> None:
     """把音量峰值對齊逐字稿輸出。"""
     lines = [
@@ -425,6 +493,9 @@ def main():
         print(f"[錯誤] 寫入 transcript.srt 失敗:")
         traceback.print_exc()
 
+    bursts = []
+    peaks = []
+
     try:
         bursts = detect_silence_bursts(segments)
         bursts_path = out_dir / "silence_bursts.json"
@@ -443,6 +514,14 @@ def main():
     except Exception:
         print(f"[錯誤] 音量分析/寫入 highlights.md 失敗:")
         traceback.print_exc()
+
+    # Step 4: 合併訊號
+    try:
+        candidates = merge_signals(peaks, bursts, channel=channel)
+    except Exception:
+        print("[錯誤] 合併訊號失敗:")
+        traceback.print_exc()
+        candidates = []
 
     print("\n完成。")
 

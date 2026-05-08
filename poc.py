@@ -385,10 +385,141 @@ def score_keywords(segments: list, channel: dict = None) -> list:
     return hits
 
 
+def detect_repeated_words(
+    segments: list,
+    min_repeats: int = 3,
+) -> list:
+    """重複詞偵測：同一詞在 segment 內重複出現。
+
+    偵測兩類重複：
+    1. 連續重複（regex）：「哈哈哈」「不要不要不要」「欸欸欸欸」
+    2. 非連續重複（n-gram 計數）：「好吃...真的好吃...超好吃」
+
+    中文無空格分詞，用 2 字元滑窗做 n-gram。
+    常見虛詞（的、了、是…）會被過濾。
+
+    回傳: list of dict {start, end, score, reasons}
+    """
+    import re
+
+    # 常見虛詞 / 標點，不計入重複
+    stopchars = set("的了是在不我你他她它們有這那個都也就要會可以"
+                    "，。！？、…～．·. ")
+
+    hits = []
+    for seg in segments:
+        text = to_traditional(seg["text"].strip())
+        if len(text) < 6:
+            continue
+
+        found = []
+
+        # 1. 連續單字重複 3+：哈哈哈、對對對、欸欸欸
+        for m in re.finditer(r"(.)\1{2,}", text):
+            char = m.group(1)
+            if char in stopchars:
+                continue
+            count = len(m.group(0))
+            found.append((f"{char}×{count}", count * 3))
+
+        # 2. 連續雙字重複 2+：不要不要、好吃好吃好吃
+        for m in re.finditer(r"(.{2})\1{1,}", text):
+            word = m.group(1)
+            if len(set(word)) <= 1:          # 跟單字重複重疊，跳過
+                continue
+            count = len(m.group(0)) // len(word)
+            if count >= 2:
+                found.append((f"{word}×{count}", count * 5))
+
+        # 3. 非連續 2-gram 出現 3+ 次（抓散落的重複）
+        if len(text) >= 10:
+            ngram_counts: dict[str, int] = {}
+            for i in range(len(text) - 1):
+                gram = text[i : i + 2]
+                if any(c in stopchars for c in gram):
+                    continue
+                ngram_counts[gram] = ngram_counts.get(gram, 0) + 1
+            for word, count in ngram_counts.items():
+                if count >= min_repeats:
+                    # 避免跟連續重複重複計分
+                    already = any(word in f[0] for f in found)
+                    if not already:
+                        found.append((f"{word}×{count}", count * 4))
+
+        if found:
+            best = max(found, key=lambda x: x[1])
+            hits.append({
+                "start": seg["start"],
+                "end": seg["end"],
+                "score": best[1],
+                "reasons": [f"repeat:{best[0]}"],
+            })
+
+    if hits:
+        print(f"      重複詞命中: {len(hits)} 段, "
+              f"最高 {max(h['score'] for h in hits)}")
+    else:
+        print("      重複詞命中: 0 段")
+    return hits
+
+
+def detect_speech_rate_changes(
+    segments: list,
+    z_threshold: float = 2.0,
+    min_chars: int = 6,
+) -> list:
+    """語速突變偵測：每段字/秒 vs 全場平均，偏離超過 z_threshold 標準差。
+
+    語速過快 → 興奮 / 緊張
+    語速過慢 → 強調 / 沉思 / 讀彈幕
+
+    回傳: list of dict {start, end, score, reasons}
+    """
+    rates: list[tuple[dict, float]] = []
+    for seg in segments:
+        text = to_traditional(seg["text"].strip())
+        duration = seg["end"] - seg["start"]
+        if duration < 0.5 or len(text) < min_chars:
+            continue
+        rates.append((seg, len(text) / duration))
+
+    if len(rates) < 10:
+        return []
+
+    all_rates = np.array([r for _, r in rates])
+    mean_rate = float(np.mean(all_rates))
+    std_rate = float(np.std(all_rates))
+
+    if std_rate < 0.5:
+        print("      語速突變: 標準差太小，跳過")
+        return []
+
+    hits = []
+    for seg, rate in rates:
+        z = (rate - mean_rate) / std_rate
+        if abs(z) >= z_threshold:
+            direction = "快" if z > 0 else "慢"
+            hits.append({
+                "start": seg["start"],
+                "end": seg["end"],
+                "score": round(abs(z) * 5, 1),
+                "reasons": [f"pace:{direction}({rate:.1f}c/s,avg={mean_rate:.1f})"],
+            })
+
+    if hits:
+        print(f"      語速突變: {len(hits)} 段 "
+              f"(均速 {mean_rate:.1f} 字/秒, σ={std_rate:.1f})")
+    else:
+        print(f"      語速突變: 0 段 (均速 {mean_rate:.1f} 字/秒)")
+    return hits
+
+
 def merge_signals(
     volume_peaks: list,
     silence_bursts: list,
     keyword_hits: list = None,
+    repeated_word_hits: list = None,
+    speech_rate_hits: list = None,
     channel: dict = None,
 ) -> list:
     """合併所有訊號源成統一的候選清單。
@@ -445,11 +576,41 @@ def merge_signals(
                     "reasons": kh.get("reasons", ["keyword"]),
                 })
 
+    # — 重複詞 —
+    if repeated_word_hits:
+        max_rw = max((rh["score"] for rh in repeated_word_hits), default=0)
+        if max_rw > 0:
+            w = weights.get("repeated_word", 10)
+            for rh in repeated_word_hits:
+                raw = rh["score"] / max_rw * 100
+                candidates.append({
+                    "start": rh["start"],
+                    "end": rh["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": rh.get("reasons", ["repeat"]),
+                })
+
+    # — 語速突變 —
+    if speech_rate_hits:
+        max_sr = max((sh["score"] for sh in speech_rate_hits), default=0)
+        if max_sr > 0:
+            w = weights.get("speech_rate_change", 5)
+            for sh in speech_rate_hits:
+                raw = sh["score"] / max_sr * 100
+                candidates.append({
+                    "start": sh["start"],
+                    "end": sh["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": sh.get("reasons", ["pace"]),
+                })
+
     candidates.sort(key=lambda c: c["start"])
     print(f"      訊號合併: {len(candidates)} 個候選 "
           f"(volume={len(volume_peaks or [])}, "
           f"silence={len(silence_bursts or [])}, "
-          f"keyword={len(keyword_hits or [])})")
+          f"keyword={len(keyword_hits or [])}, "
+          f"repeat={len(repeated_word_hits or [])}, "
+          f"pace={len(speech_rate_hits or [])})")
     return candidates
 
 
@@ -680,9 +841,27 @@ def main():
         print("[錯誤] 關鍵字打分失敗:")
         traceback.print_exc()
 
-    # Step 4b: 合併訊號
+    # Step 4b: 重複詞偵測
+    repeated_hits = []
+    try:
+        repeated_hits = detect_repeated_words(segments)
+    except Exception:
+        print("[錯誤] 重複詞偵測失敗:")
+        traceback.print_exc()
+
+    # Step 4c: 語速突變偵測
+    speech_rate_hits = []
+    try:
+        speech_rate_hits = detect_speech_rate_changes(segments)
+    except Exception:
+        print("[錯誤] 語速突變偵測失敗:")
+        traceback.print_exc()
+
+    # Step 4d: 合併訊號
     try:
         candidates = merge_signals(peaks, bursts, keyword_hits=keyword_hits,
+                                   repeated_word_hits=repeated_hits,
+                                   speech_rate_hits=speech_rate_hits,
                                    channel=channel)
     except Exception:
         print("[錯誤] 合併訊號失敗:")

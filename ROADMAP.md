@@ -50,8 +50,8 @@
 | 音量尖峰 | ✅ 完成 | RMS dB，中位數 + 門檻（壓縮音訊效果有限） |
 | 長靜音後爆發 | ✅ 完成 | segment gap ≥ 3s，含 min_chars/min_duration 過濾 |
 | 關鍵字命中 | ✅ 完成 | channel.yaml 定義梗詞 → 全文比對，命中加分 |
-| 重複詞 | 🔄 選配 | 同一詞短時間出現 3+ 次 |
-| 語速突變 | 🔄 選配 | 每段字/秒 vs 全場平均 |
+| 重複詞 | ✅ 完成 | 連續/非連續重複偵測（regex + n-gram） |
+| 語速突變 | ✅ 完成 | 每段字/秒 vs 全場平均，z-score ≥ 2.0 |
 
 ### Step 5：精華區段合併 ✅ 完成
 - 各訊號 normalize 0-100 → 乘 channel weights → 合併
@@ -130,10 +130,10 @@ python poc.py input.mp4 --model medium
 ffmpeg 抽音訊 + faster-whisper ASR + 音量峰值偵測 + OpenCC 簡轉繁。
 75 分鐘長直播實測通過（1713 段, 82.4% 涵蓋率, RTF=0.14）。
 
-### Phase 2：MVP ✅ 核心完成
+### Phase 2：MVP ✅ 全部完成
 在 PoC 基礎上加完整打分系統，產出可用的精華候選清單。
 
-**核心（全部完成）：**
+**核心：**
 1. ~~SRT 字幕輸出~~ ✅
 2. ~~channel.yaml loader~~ ✅
 3. ~~長靜音後爆發偵測~~ ✅
@@ -142,9 +142,9 @@ ffmpeg 抽音訊 + faster-whisper ASR + 音量峰值偵測 + OpenCC 簡轉繁。
 6. ~~精華區段合併~~ ✅
 7. ~~highlights.csv 輸出~~ ✅
 
-**選配（看命中率再決定）：**
-- 重複詞偵測
-- 語速突變偵測
+**選配（已完成）：**
+- ~~重複詞偵測~~ ✅
+- ~~語速突變偵測~~ ✅
 
 ### Phase 3：進階功能（之後再說）
 - `--cut-clips` ffmpeg 預剪精華小段 mp4

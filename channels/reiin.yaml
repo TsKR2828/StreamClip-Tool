@@ -1,0 +1,32 @@
+# 月上零韻 Ch. — 頻道設定
+name: "月上零韻"
+language: zh
+
+# 關鍵字 → 加分權重
+# whisper 實際輸出的文字（不是你想說的，是 ASR 聽到的）
+keywords:
+  # — 招呼語（標記開場/觀眾互動段落）—
+  阿羅哈: 5         # Alohaございます → whisper 聽成「阿羅哈呱瑪斯」
+  多麼多麼: 5        # どもども
+  皆様: 5
+
+  # — 填你的梗詞，以下是從實測 SRT 抓到的候選 —
+  好吃: 10
+  超級: 10
+  哈哈哈: 15          # 大笑
+  笑死: 20
+  事故: 25
+  神回: 30
+
+weights:
+  volume_spike: 15       # 壓縮音訊效果有限，降權
+  keyword_hit: 45        # 主力訊號
+  silence_burst: 25
+  repeated_word: 10
+  speech_rate_change: 5
+
+highlight:
+  top_n: 30
+  min_score: 5
+  merge_gap_sec: 5.0
+  padding_sec: 3.0

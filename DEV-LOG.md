@@ -67,14 +67,22 @@
 | 重複詞偵測 | ✅ 完成 | 連續重複（regex）+ 非連續 n-gram，含 stopchars 過濾 |
 | 語速突變偵測 | ✅ 完成 | z-score ≥ 2.0，57/1713 段觸發（3.3%） |
 
-### Phase 3：進階功能（之後再說）
+#### Phase 3 實測結果（2026-05-09）
+
+- `--cut-clips`：30/30 切片成功（stream copy 不重新編碼，秒切）
+- `markers.edl`：CMX 3600 EDL 格式，含 SMPTE timecode（30fps）
+- `chapters.txt`：YouTube 章節格式（MM:SS + 標題），30 筆
+- `--chat-json`：架構完成，支援 JSON array / JSONL，等提供聊天室資料驗收
+- `--titles`：架構完成，Ollama REST API（localhost:11434），等本機部署驗收
+
+### Phase 3：進階功能 ✅ 完成
 
 | 項目 | 狀態 | 備註 |
 |------|------|------|
-| --cut-clips ffmpeg 預剪 | ❌ 待做 | 自動切精華小段 mp4 |
-| YouTube 彈幕密度分析 | ❌ 待做 | live chat replay JSON |
-| Ollama 標題草稿 | ❌ 待做 | 本地 LLM 給每段下標題 |
-| Premiere XML marker 輸出 | ❌ 待做 | 直接開進剪輯軟體 |
+| --cut-clips ffmpeg 預剪 | ✅ 完成 | stream copy 秒切，30/30 成功 |
+| YouTube 彈幕密度分析 | ✅ 完成 | --chat-json，z-score 密度偵測 |
+| Ollama 標題草稿 | ✅ 完成 | --titles，localhost:11434 |
+| 剪輯標記輸出 | ✅ 完成 | markers.edl（EDL）+ chapters.txt（YouTube）|
 
 ### 永遠不做
 

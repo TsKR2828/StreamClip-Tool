@@ -18,8 +18,9 @@ weights:
   volume_spike: 20       # 音量尖峰
   keyword_hit: 40        # 關鍵字命中（主力訊號）
   silence_burst: 25      # 長靜音後爆發
-  repeated_word: 10      # 重複詞（Phase 2 選配）
-  speech_rate_change: 5  # 語速突變（Phase 2 選配）
+  repeated_word: 10      # 重複詞
+  speech_rate_change: 5  # 語速突變
+  chat_density: 30       # 彈幕密度（需 --chat-json）
 
 # highlight 篩選設定
 highlight:

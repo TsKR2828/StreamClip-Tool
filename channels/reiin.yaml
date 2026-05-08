@@ -24,6 +24,7 @@ weights:
   silence_burst: 25
   repeated_word: 10
   speech_rate_change: 5
+  chat_density: 30       # 彈幕密度（需 --chat-json）
 
 highlight:
   top_n: 30

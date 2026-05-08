@@ -53,8 +53,14 @@ python poc.py "直播錄影.mp4"
 # 指定頻道設定（關鍵字權重）
 python poc.py "直播.mp4" --channel channels/reiin.yaml
 
-# 指定模型大小（VRAM 不夠或想要更快）
-python poc.py "直播.mp4" --model medium
+# 自動切出精華小段 mp4
+python poc.py "直播.mp4" --channel channels/reiin.yaml --cut-clips
+
+# 加入 YouTube 彈幕密度訊號
+python poc.py "直播.mp4" --chat-json chat.json
+
+# 用 Ollama 產生標題草稿（需本機執行 ollama serve）
+python poc.py "直播.mp4" --titles --ollama-model llama3
 
 # 調整音量峰值門檻
 python poc.py "直播.mp4" --peak-db 3     # 更敏感
@@ -78,7 +84,13 @@ output/<hash>_<檔名前20字>/
 ├── transcript.srt        # SRT 字幕檔（可直接匯入剪輯軟體）
 ├── highlights.csv        # 精華候選清單（多訊號合併，Excel 可開）
 ├── highlights.md         # 音量峰值候選 + 對應台詞
-└── silence_bursts.json   # 長靜音後爆發候選清單
+├── silence_bursts.json   # 長靜音後爆發候選清單
+├── markers.edl           # EDL 剪輯標記（可匯入 Premiere / DaVinci Resolve）
+├── chapters.txt          # YouTube 章節時間軸（貼到影片說明欄）
+└── clips/                # 精華小段 mp4（--cut-clips 時產出）
+    ├── clip_01_*.mp4
+    ├── clip_02_*.mp4
+    └── ...
 ```
 
 ### 快取機制

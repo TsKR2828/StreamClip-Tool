@@ -1,27 +1,33 @@
-# TODO — Phase 2 MVP
+# TODO — StreamClip-Tool
 
-## 依賴圖
+## Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅
 
-```
-T1 ✅ SRT 輸出
-T2 ✅ channel.yaml loader
-T3 ✅ 長靜音後爆發偵測
-T4 ✅ 關鍵字打分 ← T2 + 梗詞清單
-T5 ✅ 合併訊號 ← T3 + T4 + 音量 peaks
-T6 ✅ 區段合併 ← T5
-T7 ✅ highlights.csv ← T6
-```
-
-## Phase 2：全部完成（核心 + 選配）
+所有計畫功能已完成。以下為完整記錄。
 
 ## 已完成
 
+### Phase 1：PoC 驗證（2026-05-06）
+- [x] ffmpeg 抽音訊
+- [x] faster-whisper ASR（large-v3）
+- [x] OpenCC 簡轉繁
+- [x] segments.json 快取
+- [x] hash 資料夾命名
+- [x] 音量峰值偵測
+- [x] check.py 診斷工具
+
+### Phase 2：MVP（2026-05-07 ~ 05-09）
 - [x] **T1：SRT 字幕輸出**（2026-05-07）
 - [x] **T2：channel.yaml loader**（2026-05-07）
 - [x] **T3：長靜音後爆發偵測**（2026-05-07）
-- [x] **T4：關鍵字打分**（2026-05-09）— score_keywords() 全文比對 + 多次命中加乘，30 段命中
-- [x] **T5：合併訊號成候選清單**（2026-05-07）— volume + silence + keyword + repeat + pace 五訊號加權合併
-- [x] **T6：精華區段合併**（2026-05-07）— merge_gap + padding + top_n 篩選 + 逐字稿附加
-- [x] **T7：highlights.csv 輸出**（2026-05-07）— pandas CSV，utf-8-sig for Excel
-- [x] **選配：重複詞偵測**（2026-05-09）— 連續重複（regex）+ 非連續 n-gram，35 段命中
-- [x] **選配：語速突變偵測**（2026-05-09）— z-score ≥ 2.0，57 段觸發（均速 5.2 字/秒）
+- [x] **T4：關鍵字打分**（2026-05-09）— 30 段命中
+- [x] **T5：合併訊號成候選清單**（2026-05-07）— 六訊號加權合併
+- [x] **T6：精華區段合併**（2026-05-07）
+- [x] **T7：highlights.csv 輸出**（2026-05-07）
+- [x] **選配：重複詞偵測**（2026-05-09）— 35 段命中
+- [x] **選配：語速突變偵測**（2026-05-09）— 57 段觸發
+
+### Phase 3：進階功能（2026-05-09）
+- [x] **--cut-clips ffmpeg 預剪**（2026-05-09）— stream copy 秒切，30/30 成功
+- [x] **YouTube 彈幕密度分析**（2026-05-09）— --chat-json，待提供聊天室 JSON 驗收
+- [x] **Ollama 標題草稿**（2026-05-09）— --titles，待本機部署 Ollama 驗收
+- [x] **剪輯標記輸出**（2026-05-09）— markers.edl + chapters.txt

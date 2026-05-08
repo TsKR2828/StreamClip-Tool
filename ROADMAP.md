@@ -146,11 +146,11 @@ ffmpeg 抽音訊 + faster-whisper ASR + 音量峰值偵測 + OpenCC 簡轉繁。
 - ~~重複詞偵測~~ ✅
 - ~~語速突變偵測~~ ✅
 
-### Phase 3：進階功能（之後再說）
-- `--cut-clips` ffmpeg 預剪精華小段 mp4
-- YouTube 彈幕密度分析（live chat replay JSON）
-- 本地 LLM（Ollama）給每段下標題草稿
-- `.fcpxml` / Premiere XML marker 輸出
+### Phase 3：進階功能 ✅ 完成
+- ~~`--cut-clips` ffmpeg 預剪精華小段 mp4~~ ✅
+- ~~YouTube 彈幕密度分析（--chat-json）~~ ✅
+- ~~本地 LLM 標題草稿（--titles + Ollama）~~ ✅
+- ~~EDL 剪輯標記 + YouTube 章節輸出~~ ✅
 
 ### 永遠不做
 - ~~pyannote 說話人分離~~（單人直播不需要）

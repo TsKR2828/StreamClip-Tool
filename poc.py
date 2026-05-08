@@ -1,24 +1,30 @@
 """
-PoC: 吃一個影片/音訊檔,跑 faster-whisper + 音量峰值偵測,
-吐帶時間戳的逐字稿 + 精華候選清單。
+StreamClip-Tool: 直播切片標註輔助工具
 
-用途:驗證本機環境能順利跑起來。第一次跑會自動下載模型(large-v3 約 3GB)。
+吃一個影片/音訊檔,跑 faster-whisper ASR + 五訊號精華偵測,
+吐帶時間戳的逐字稿 + 精華候選清單 + 可選自動切片。
 
 用法:
     python poc.py <input.mp4>
-    python poc.py <input.mp4> --model medium
-    python poc.py <input.mp4> --peak-db 8     # 提高門檻、只抓更誇張的峰值
+    python poc.py <input.mp4> --channel channels/reiin.yaml
+    python poc.py <input.mp4> --cut-clips              # 自動切精華小段 mp4
+    python poc.py <input.mp4> --chat-json chat.json     # YouTube 彈幕密度訊號
+    python poc.py <input.mp4> --titles                  # Ollama 標題草稿
+    python poc.py <input.mp4> --peak-db 8               # 調高音量門檻
     python poc.py <input.mp4> --device cpu
 
 輸出:
     output/<hash>/transcript.md         逐字稿
-    output/<hash>/transcript.srt        字幕檔（SRT 格式，可丟剪輯軟體）
+    output/<hash>/transcript.srt        字幕檔（SRT 格式,可丟剪輯軟體）
+    output/<hash>/highlights.csv        精華候選清單（多訊號合併,Excel 可開）
     output/<hash>/highlights.md         音量峰值 + 對應台詞
-    output/<hash>/highlights.csv        精華候選清單（多訊號合併，Excel 可開）
     output/<hash>/silence_bursts.json   長靜音後爆發候選清單
     output/<hash>/segments.json         whisper 快取(下次不用重跑)
     output/<hash>/audio.wav             抽完的音訊(跑完可刪)
     output/<hash>/source.txt            原始檔名記錄
+    output/<hash>/markers.edl           EDL 剪輯標記（--cut-clips 時產出）
+    output/<hash>/chapters.txt          YouTube 章節時間軸（--cut-clips 時產出）
+    output/<hash>/clips/                精華小段 mp4（--cut-clips 時產出）
 """
 
 import argparse
@@ -278,6 +284,7 @@ def load_channel(path: Path) -> dict:
             "silence_burst": 25,
             "repeated_word": 10,
             "speech_rate_change": 5,
+            "chat_density": 30,
         },
         "highlight": {
             "top_n": 30,
@@ -514,12 +521,118 @@ def detect_speech_rate_changes(
     return hits
 
 
+def analyze_chat_density(
+    chat_path: Path,
+    window_sec: float = 10.0,
+    z_threshold: float = 2.0,
+) -> list:
+    """分析 YouTube 聊天室訊息密度，找出彈幕密集的時間點。
+
+    支援格式：
+    - JSON array（每個物件需含 time_in_seconds 或 time_text 欄位）
+    - JSONL（每行一個 JSON 物件）
+    兩種都是 chat_downloader / yt-dlp 的常見輸出格式。
+
+    流程：
+    1. 解析時間戳 → 切 window_sec 窗口計算每窗訊息數
+    2. 找 z-score ≥ z_threshold 的窗口（彈幕密度尖峰）
+
+    回傳: list of dict {start, end, score, reasons}
+    """
+    raw = chat_path.read_text(encoding="utf-8")
+
+    # 嘗試 JSON array → JSONL
+    messages = []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            messages = data
+    except json.JSONDecodeError:
+        # JSONL: 每行一個 JSON
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                messages.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    if not messages:
+        print("      彈幕分析: 解析失敗或檔案為空")
+        return []
+
+    # 取得每則訊息的時間（秒）
+    times = []
+    for msg in messages:
+        t = msg.get("time_in_seconds")
+        if t is None:
+            # fallback: 嘗試其他常見欄位
+            t = msg.get("timestamp") or msg.get("time") or msg.get("offset")
+        if t is not None:
+            try:
+                times.append(float(t))
+            except (ValueError, TypeError):
+                continue
+    if not times:
+        # 嘗試從 time_text 解析 "MM:SS" 格式
+        for msg in messages:
+            tt = msg.get("time_text", "")
+            parts = tt.replace("−", "-").split(":")
+            try:
+                if len(parts) == 2:
+                    times.append(int(parts[0]) * 60 + int(parts[1]))
+                elif len(parts) == 3:
+                    times.append(
+                        int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                    )
+            except ValueError:
+                continue
+
+    if len(times) < 10:
+        print(f"      彈幕分析: 訊息太少 ({len(times)} 則)，跳過")
+        return []
+
+    times.sort()
+    max_time = times[-1]
+    n_windows = int(max_time / window_sec) + 1
+
+    # 計算每窗訊息數
+    counts = np.zeros(n_windows)
+    for t in times:
+        idx = min(int(t / window_sec), n_windows - 1)
+        counts[idx] += 1
+
+    mean_c = float(np.mean(counts))
+    std_c = float(np.std(counts))
+    if std_c < 1.0:
+        print(f"      彈幕分析: 密度太均勻 (σ={std_c:.1f})，跳過")
+        return []
+
+    hits = []
+    for i in range(n_windows):
+        z = (counts[i] - mean_c) / std_c
+        if z >= z_threshold:
+            hits.append({
+                "start": i * window_sec,
+                "end": (i + 1) * window_sec,
+                "score": round(z * counts[i], 1),
+                "reasons": [f"chat({int(counts[i])}msg/{window_sec:.0f}s)"],
+            })
+
+    print(f"      彈幕分析: {len(times)} 則訊息, "
+          f"{len(hits)} 個密度尖峰 "
+          f"(均 {mean_c:.1f} 則/窗, σ={std_c:.1f})")
+    return hits
+
+
 def merge_signals(
     volume_peaks: list,
     silence_bursts: list,
     keyword_hits: list = None,
     repeated_word_hits: list = None,
     speech_rate_hits: list = None,
+    chat_density_hits: list = None,
     channel: dict = None,
 ) -> list:
     """合併所有訊號源成統一的候選清單。
@@ -604,13 +717,31 @@ def merge_signals(
                     "reasons": sh.get("reasons", ["pace"]),
                 })
 
+    # — 彈幕密度 —
+    if chat_density_hits:
+        max_cd = max((ch["score"] for ch in chat_density_hits), default=0)
+        if max_cd > 0:
+            w = weights.get("chat_density", 30)
+            for ch in chat_density_hits:
+                raw = ch["score"] / max_cd * 100
+                candidates.append({
+                    "start": ch["start"],
+                    "end": ch["end"],
+                    "score": round(raw * w / 100, 1),
+                    "reasons": ch.get("reasons", ["chat"]),
+                })
+
     candidates.sort(key=lambda c: c["start"])
-    print(f"      訊號合併: {len(candidates)} 個候選 "
-          f"(volume={len(volume_peaks or [])}, "
-          f"silence={len(silence_bursts or [])}, "
-          f"keyword={len(keyword_hits or [])}, "
-          f"repeat={len(repeated_word_hits or [])}, "
-          f"pace={len(speech_rate_hits or [])})")
+    parts = [
+        f"volume={len(volume_peaks or [])}",
+        f"silence={len(silence_bursts or [])}",
+        f"keyword={len(keyword_hits or [])}",
+        f"repeat={len(repeated_word_hits or [])}",
+        f"pace={len(speech_rate_hits or [])}",
+    ]
+    if chat_density_hits:
+        parts.append(f"chat={len(chat_density_hits)}")
+    print(f"      訊號合併: {len(candidates)} 個候選 ({', '.join(parts)})")
     return candidates
 
 
@@ -744,19 +875,182 @@ def write_highlights_csv(highlights: list, out_csv: Path) -> None:
 
     rows = []
     for h in highlights:
-        rows.append({
+        row = {
             "rank": h["rank"],
             "start": fmt_ts(h["start"]),
             "end": fmt_ts(h["end"]),
             "duration_sec": h["duration"],
             "score": h["score"],
             "reasons": h["reasons"],
-            "transcript": h["transcript"][:200],  # 截斷避免 CSV 太寬
-        })
+        }
+        if "title" in h:
+            row["title"] = h["title"]
+        row["transcript"] = h["transcript"][:200]  # 截斷避免 CSV 太寬
+        rows.append(row)
 
     df = pd.DataFrame(rows)
     df.to_csv(out_csv, index=False, encoding="utf-8-sig")  # Excel 開 CSV 需要 BOM
     print(f"      寫出 → {out_csv} ({len(df)} 筆)")
+
+
+# ──────────────────────────────────────────────
+# Phase 3: 進階功能
+# ──────────────────────────────────────────────
+
+def cut_clips(
+    input_path: Path,
+    highlights: list,
+    out_dir: Path,
+) -> None:
+    """用 ffmpeg 把每個精華段落切成獨立的 mp4。
+
+    使用 -c copy（不重新編碼）以求速度。
+    注意：因為只在 keyframe 切，起點可能偏移幾秒，這是 stream copy 的正常行為。
+    如果需要精確到幀的切割，請手動加 -c:v libx264 重新編碼。
+    """
+    clips_dir = out_dir / "clips"
+    clips_dir.mkdir(exist_ok=True)
+
+    ok = 0
+    for h in highlights:
+        rank = h["rank"]
+        tag = fmt_ts(h["start"]).replace(":", "").replace(".", "")
+        out_file = clips_dir / f"clip_{rank:02d}_{tag}.mp4"
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(h["start"]),
+            "-i", str(input_path),
+            "-t", str(h["duration"]),
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            str(out_file),
+        ]
+        try:
+            subprocess.run(
+                cmd, check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            ok += 1
+        except subprocess.CalledProcessError:
+            print(f"      [警告] clip #{rank} 切割失敗，跳過")
+    print(f"      切片完成: {ok}/{len(highlights)} 個 → {clips_dir}")
+
+
+def generate_titles(
+    highlights: list,
+    model: str = "llama3",
+    base_url: str = "http://localhost:11434",
+) -> list:
+    """用本地 Ollama 為每個精華段落產生標題草稿。
+
+    需要 Ollama 在本機執行中（ollama serve）。
+    標題會直接寫入 highlight dict 的 "title" 欄位。
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"{base_url}/api/generate"
+    ok = 0
+    for h in highlights:
+        transcript = h.get("transcript", "")[:300]
+        if not transcript.strip():
+            h["title"] = ""
+            continue
+        prompt = (
+            "你是一個直播切片標題產生器。\n"
+            "請根據以下直播逐字稿片段，用繁體中文寫一個簡短、有趣、"
+            "吸引人點擊的標題（15 字以內，不要加引號）。\n\n"
+            f"逐字稿：\n{transcript}\n\n標題："
+        )
+        payload = json.dumps({
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+                title = result.get("response", "").strip().split("\n")[0]
+                h["title"] = title
+                ok += 1
+        except (urllib.error.URLError, TimeoutError) as e:
+            if ok == 0:
+                print(f"      [錯誤] Ollama 連線失敗 ({e})，跳過標題產生")
+                return highlights
+            h["title"] = ""
+
+    print(f"      標題草稿: {ok}/{len(highlights)} 個 (model={model})")
+    return highlights
+
+
+def write_markers(
+    highlights: list,
+    out_dir: Path,
+    source_name: str = "",
+    fps: int = 30,
+) -> None:
+    """輸出精華標記檔案，供剪輯軟體匯入。
+
+    產出：
+    - markers.edl — CMX 3600 EDL（Premiere / DaVinci Resolve / FCPX 可匯入）
+    - chapters.txt — YouTube 章節格式（貼到影片說明欄）
+    """
+    if not highlights:
+        return
+
+    # 按時間排序（不是分數）
+    by_time = sorted(highlights, key=lambda h: h["start"])
+
+    # --- EDL ---
+    def tc(sec: float) -> str:
+        """秒 → SMPTE timecode HH:MM:SS:FF"""
+        total_frames = int(round(sec * fps))
+        ff = total_frames % fps
+        total_sec = total_frames // fps
+        ss = total_sec % 60
+        total_sec //= 60
+        mm = total_sec % 60
+        hh = total_sec // 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
+
+    edl_lines = [
+        f"TITLE: {source_name or 'StreamClip Highlights'}",
+        f"FCM: NON-DROP FRAME",
+        "",
+    ]
+    for i, h in enumerate(by_time, 1):
+        src_in = tc(h["start"])
+        src_out = tc(h["end"])
+        title = h.get("title", "")
+        label = title if title else f"Highlight #{h['rank']} ({h['score']})"
+        edl_lines.append(
+            f"{i:03d}  001      V     C        "
+            f"{src_in} {src_out} {src_in} {src_out}"
+        )
+        edl_lines.append(f"* FROM CLIP NAME: {label}")
+        edl_lines.append("")
+
+    edl_path = out_dir / "markers.edl"
+    edl_path.write_text("\n".join(edl_lines), encoding="utf-8")
+    print(f"      寫出 → {edl_path}")
+
+    # --- YouTube chapters ---
+    chap_lines = []
+    for h in by_time:
+        total_sec = int(h["start"])
+        mm = total_sec // 60
+        ss = total_sec % 60
+        title = h.get("title", "")
+        label = title if title else f"Highlight #{h['rank']}"
+        chap_lines.append(f"{mm:02d}:{ss:02d} {label}")
+
+    chap_path = out_dir / "chapters.txt"
+    chap_path.write_text("\n".join(chap_lines), encoding="utf-8")
+    print(f"      寫出 → {chap_path}")
 
 
 def main():
@@ -770,6 +1064,14 @@ def main():
                     help="峰值門檻(基線之上幾 dB),預設 4;命中太多可調高、太少可調低")
     ap.add_argument("--channel", type=Path, default=None,
                     help="頻道設定檔路徑（channels/xxx.yaml），不指定則用預設值")
+    ap.add_argument("--cut-clips", action="store_true",
+                    help="自動切出精華小段 mp4（需要 ffmpeg）")
+    ap.add_argument("--chat-json", type=Path, default=None,
+                    help="YouTube 聊天室 JSON 檔路徑（chat_downloader 格式）")
+    ap.add_argument("--titles", action="store_true",
+                    help="用本地 Ollama 為每段精華產生標題草稿")
+    ap.add_argument("--ollama-model", default="llama3",
+                    help="Ollama 模型名稱（預設 llama3）")
     args = ap.parse_args()
 
     channel = load_channel(args.channel)
@@ -857,11 +1159,24 @@ def main():
         print("[錯誤] 語速突變偵測失敗:")
         traceback.print_exc()
 
-    # Step 4d: 合併訊號
+    # Step 4d: 彈幕密度分析（可選）
+    chat_hits = []
+    if args.chat_json:
+        try:
+            if not args.chat_json.exists():
+                print(f"[警告] 找不到聊天室檔案: {args.chat_json}")
+            else:
+                chat_hits = analyze_chat_density(args.chat_json)
+        except Exception:
+            print("[錯誤] 彈幕密度分析失敗:")
+            traceback.print_exc()
+
+    # Step 4e: 合併訊號
     try:
         candidates = merge_signals(peaks, bursts, keyword_hits=keyword_hits,
                                    repeated_word_hits=repeated_hits,
                                    speech_rate_hits=speech_rate_hits,
+                                   chat_density_hits=chat_hits,
                                    channel=channel)
     except Exception:
         print("[錯誤] 合併訊號失敗:")
@@ -876,12 +1191,36 @@ def main():
         print("[錯誤] 區段合併失敗:")
         traceback.print_exc()
 
-    # Step 6: 輸出 highlights.csv
+    # Step 6a: Ollama 標題草稿（可選）
+    if args.titles and highlights:
+        try:
+            highlights = generate_titles(highlights, model=args.ollama_model)
+        except Exception:
+            print("[錯誤] 標題產生失敗:")
+            traceback.print_exc()
+
+    # Step 6b: 輸出 highlights.csv
     try:
         write_highlights_csv(highlights, out_dir / "highlights.csv")
     except Exception:
         print("[錯誤] 寫入 highlights.csv 失敗:")
         traceback.print_exc()
+
+    # Step 6c: 剪輯標記檔（EDL + YouTube chapters）
+    if highlights:
+        try:
+            write_markers(highlights, out_dir, source_name=args.input.name)
+        except Exception:
+            print("[錯誤] 寫入 markers 失敗:")
+            traceback.print_exc()
+
+    # Step 7: 自動切片（可選）
+    if args.cut_clips and highlights:
+        try:
+            cut_clips(args.input, highlights, out_dir)
+        except Exception:
+            print("[錯誤] 切片失敗:")
+            traceback.print_exc()
 
     print("\n完成。")
 

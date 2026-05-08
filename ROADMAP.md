@@ -47,22 +47,23 @@
 
 | 訊號 | 狀態 | 怎麼抓 |
 |---|---|---|
-| 音量尖峰 | ✅ 完成 | librosa RMS，找局部最大（壓縮音訊效果有限） |
+| 音量尖峰 | ✅ 完成 | RMS dB，中位數 + 門檻（壓縮音訊效果有限） |
 | 長靜音後爆發 | ✅ 完成 | segment gap ≥ 3s，含 min_chars/min_duration 過濾 |
-| 關鍵字命中 | ❌ 待做 | channel.yaml 定義關鍵字 → 命中加分 |
+| 關鍵字命中 | ✅ 完成 | channel.yaml 定義梗詞 → 全文比對，命中加分 |
 | 重複詞 | 🔄 選配 | 同一詞短時間出現 3+ 次 |
 | 語速突變 | 🔄 選配 | 每段字/秒 vs 全場平均 |
-| 笑聲（文字） | 🔄 選配 | 文字含「www」「草」「ｗ」「笑」 |
 
-### Step 5：精華區段合併 ❌ 待做
-- 相鄰高分 segment 合併成一段
-- 每段往前後各擴 padding（避免切到一半）
-- 同一亮點被多訊號命中 → 標註全部命中規則
+### Step 5：精華區段合併 ✅ 完成
+- 各訊號 normalize 0-100 → 乘 channel weights → 合併
+- 相鄰候選 gap ≤ merge_gap_sec → 合併成一段
+- 每段往前後各擴 padding_sec（避免切到一半）
+- 按 score 降序取 top_n，過濾 min_score 以下
 
-### Step 6：產出檔案（部分完成）
+### Step 6：產出檔案 ✅ 完成
 - ✅ `transcript.md` / `.srt`
-- ❌ `highlights.csv`（待 Step 4/5 完成後整合）
-- ✅ `highlights.md`（目前只有音量峰值）
+- ✅ `highlights.csv`（多訊號合併，utf-8-sig for Excel）
+- ✅ `highlights.md`（音量峰值 + 對應台詞）
+- ✅ `silence_bursts.json`
 
 ---
 
@@ -74,7 +75,7 @@
 | ASR | `faster-whisper` | CTranslate2，本地 GPU/CPU |
 | 簡繁轉換 | `opencc-python-reimplemented` | s2twp（台灣正體 + 詞彙） |
 | 設定檔 | `pyyaml` | channel.yaml + config |
-| 輸出表格 | `pandas`（待加） | highlights.csv |
+| 輸出表格 | `pandas` | highlights.csv |
 | CLI | `argparse` | 內建，不需額外套件 |
 
 **Python 版本：** 3.13  
@@ -86,14 +87,16 @@
 
 ```
 StreamClip-Tool/
+├── README.md               # 使用說明
 ├── ROADMAP.md              # 本檔
 ├── DEV-LOG.md              # 開發進度 & 問題回報
-├── TODO.md                 # Phase 2 待辦清單
+├── TODO.md                 # 待辦清單
 ├── poc.py                  # 主程式（PoC → MVP 漸進式開發）
 ├── check.py                # 涵蓋率/空白診斷工具
 ├── requirements-poc.txt    # Python 依賴
 ├── channels/
-│   └── _template.yaml      # 頻道設定範本
+│   ├── _template.yaml      # 頻道設定範本
+│   └── reiin.yaml          # 月上零韻頻道設定
 ├── output/                 # gitignore
 └── .venv/                  # gitignore
 ```
@@ -127,17 +130,17 @@ python poc.py input.mp4 --model medium
 ffmpeg 抽音訊 + faster-whisper ASR + 音量峰值偵測 + OpenCC 簡轉繁。
 75 分鐘長直播實測通過（1713 段, 82.4% 涵蓋率, RTF=0.14）。
 
-### Phase 2：MVP 🔄 進行中
+### Phase 2：MVP ✅ 核心完成
 在 PoC 基礎上加完整打分系統，產出可用的精華候選清單。
 
-**核心（一定做）：**
+**核心（全部完成）：**
 1. ~~SRT 字幕輸出~~ ✅
 2. ~~channel.yaml loader~~ ✅
 3. ~~長靜音後爆發偵測~~ ✅
-4. 關鍵字打分
-5. 合併訊號成候選清單
-6. 精華區段合併（Step 5）
-7. highlights.csv 輸出
+4. ~~關鍵字打分~~ ✅
+5. ~~合併訊號成候選清單~~ ✅
+6. ~~精華區段合併~~ ✅
+7. ~~highlights.csv 輸出~~ ✅
 
 **選配（看命中率再決定）：**
 - 重複詞偵測

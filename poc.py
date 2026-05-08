@@ -340,6 +340,51 @@ def detect_silence_bursts(
     return bursts
 
 
+def score_keywords(segments: list, channel: dict = None) -> list:
+    """關鍵字打分：對每個 segment 的文字比對 channel.yaml 的 keywords。
+
+    每個 keyword 命中一次加對應的權重分。同一 segment 可命中多個 keyword。
+    同一 keyword 出現多次會乘以次數（例如「哈哈哈哈哈哈」含 2 次「哈哈哈」→ ×2）。
+
+    回傳: list of dict {start, end, score, reasons}
+    """
+    if channel is None:
+        channel = load_channel(None)
+    keywords = channel.get("keywords", {})
+    if not keywords:
+        return []
+
+    hits = []
+    for seg in segments:
+        text = to_traditional(seg["text"].strip())
+        seg_score = 0
+        matched = []
+        for kw, weight in keywords.items():
+            count = text.count(kw)
+            if count > 0:
+                seg_score += weight * count
+                if count > 1:
+                    matched.append(f"kw:{kw}×{count}")
+                else:
+                    matched.append(f"kw:{kw}")
+        if seg_score > 0:
+            hits.append({
+                "start": seg["start"],
+                "end": seg["end"],
+                "score": seg_score,
+                "reasons": matched,
+            })
+
+    if hits:
+        total_kw = sum(h["score"] for h in hits)
+        print(f"      關鍵字命中: {len(hits)} 段, "
+              f"總權重 {total_kw}, "
+              f"最高 {max(h['score'] for h in hits)}")
+    else:
+        print("      關鍵字命中: 0 段")
+    return hits
+
+
 def merge_signals(
     volume_peaks: list,
     silence_bursts: list,
@@ -386,7 +431,7 @@ def merge_signals(
                     "reasons": [f"silence({b['gap_before_sec']:.1f}s)"],
                 })
 
-    # — 關鍵字命中（T4 接入口，目前為空）—
+    # — 關鍵字命中 —
     if keyword_hits:
         max_kw = max((kh["score"] for kh in keyword_hits), default=0)
         if max_kw > 0:
@@ -627,9 +672,18 @@ def main():
         print(f"[錯誤] 音量分析/寫入 highlights.md 失敗:")
         traceback.print_exc()
 
-    # Step 4: 合併訊號
+    # Step 4a: 關鍵字打分
+    keyword_hits = []
     try:
-        candidates = merge_signals(peaks, bursts, channel=channel)
+        keyword_hits = score_keywords(segments, channel=channel)
+    except Exception:
+        print("[錯誤] 關鍵字打分失敗:")
+        traceback.print_exc()
+
+    # Step 4b: 合併訊號
+    try:
+        candidates = merge_signals(peaks, bursts, keyword_hits=keyword_hits,
+                                   channel=channel)
     except Exception:
         print("[錯誤] 合併訊號失敗:")
         traceback.print_exc()

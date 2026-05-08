@@ -32,10 +32,22 @@
 | T1 | SRT 字幕輸出 | ✅ 完成 | 整數毫秒運算、無 BOM |
 | T2 | channel.yaml loader | ✅ 完成 | 深度合併預設值 + --channel CLI arg |
 | T3 | 長靜音後爆發偵測 | ✅ 完成 | 75 分鐘實測 24→18 筆（過濾雜訊） |
-| T4 | 關鍵字打分 | ❌ 待做 | 需要月月提供常用梗詞 |
+| T4 | 關鍵字打分 | ✅ 完成 | score_keywords() + channels/reiin.yaml 實測通過 |
 | T5 | 合併訊號成候選清單 | ✅ 完成 | volume + silence 加權合併，T4 keyword 預留接口 |
 | T6 | 精華區段合併（Step 5） | ✅ 完成 | 合併相鄰 ≤ merge_gap_sec + padding + top_n 篩選 |
 | T7 | highlights.csv 表格輸出 | ✅ 完成 | pandas CSV（utf-8-sig for Excel）+ 逐字稿截斷 200 字 |
+
+#### T4 關鍵字打分實測結果（2026-05-09）
+
+- 素材：75.7 分鐘雜談直播（同 Phase 1 測試素材）
+- 頻道設定：channels/reiin.yaml（9 組關鍵字）
+- 關鍵字命中：30 段，總權重 265，單段最高 20
+- 訊號合併：392 候選（volume=344, silence=18, keyword=30）→ 30 筆精華
+- 排序改善：
+  - 開場招呼「阿羅哈呱瑪斯 × 多次」從未入榜 → **Rank #1**（145.9 分）
+  - 冰淇淋討論「好吃 × 多次」從未入榜 → **Rank #2**（136.8 分）
+  - 含「笑死」的幸災樂禍段落推至 **Rank #3**（77.2 分）
+- 結論：keyword 訊號有效提升排序品質，切合直播主題的段落被正確推高
 
 #### Phase 2 選配（看命中率再決定）
 

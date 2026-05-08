@@ -50,6 +50,9 @@ python poc.py $args
 # 基本用法（GPU + large-v3 + 中文）
 python poc.py "直播錄影.mp4"
 
+# 指定頻道設定（關鍵字權重）
+python poc.py "直播.mp4" --channel channels/reiin.yaml
+
 # 指定模型大小（VRAM 不夠或想要更快）
 python poc.py "直播.mp4" --model medium
 
@@ -68,11 +71,14 @@ python poc.py "配信.mp4" --lang ja
 
 ```
 output/<hash>_<檔名前20字>/
-├── source.txt        # 原始檔名記錄
-├── audio.wav         # 抽出的 16kHz mono 音訊（可刪）
-├── segments.json     # whisper 辨識快取（下次秒讀）
-├── transcript.md     # 帶時間戳的繁體中文逐字稿
-└── highlights.md     # 音量峰值候選 + 對應台詞
+├── source.txt            # 原始檔名記錄
+├── audio.wav             # 抽出的 16kHz mono 音訊（可刪）
+├── segments.json         # whisper 辨識快取（下次秒讀）
+├── transcript.md         # 帶時間戳的繁體中文逐字稿
+├── transcript.srt        # SRT 字幕檔（可直接匯入剪輯軟體）
+├── highlights.csv        # 精華候選清單（多訊號合併，Excel 可開）
+├── highlights.md         # 音量峰值候選 + 對應台詞
+└── silence_bursts.json   # 長靜音後爆發候選清單
 ```
 
 ### 快取機制
@@ -80,6 +86,45 @@ output/<hash>_<檔名前20字>/
 - `audio.wav` 存在就跳過 ffmpeg
 - `segments.json` 存在就跳過 whisper（省 10+ 分鐘）
 - 想重跑 whisper：刪掉 `segments.json` 再跑
+
+## 頻道設定
+
+每個 VTuber / 頻道可以自訂 `channels/<name>.yaml`，定義關鍵字和各訊號的權重比例：
+
+```yaml
+name: "頻道名"
+language: zh
+
+keywords:
+  梗詞A: 10      # whisper 實際輸出的文字（不是你想說的）
+  笑死: 20
+  神回: 30
+
+weights:
+  volume_spike: 15      # 壓縮音訊降權
+  keyword_hit: 45       # 主力訊號
+  silence_burst: 25
+  repeated_word: 10
+  speech_rate_change: 5
+
+highlight:
+  top_n: 30
+  min_score: 5
+  merge_gap_sec: 5.0
+  padding_sec: 3.0
+```
+
+不指定 `--channel` 時使用內建預設值。範本見 `channels/_template.yaml`。
+
+## 精華偵測訊號
+
+| 訊號 | 說明 | 適用場景 |
+|------|------|---------|
+| 音量尖峰 | RMS 超過中位數 + 門檻 dB | 吶喊、大笑（音訊未壓縮時效果佳） |
+| 長靜音後爆發 | 前一段結束到這段開始 ≥ 3s | 看彈幕後突然開口、事故後沉默 |
+| 關鍵字命中 | channel.yaml 定義的梗詞 | 口頭禪、特定梗、招呼語 |
+
+各訊號先在自身類型內 normalize 到 0-100，再乘以 channel weights，最後合併相鄰區段。
 
 ## 效能參考（RTX 3060 Ti 8GB）
 
@@ -91,5 +136,6 @@ output/<hash>_<檔名前20字>/
 
 ## 目前限制
 
-- 音量偵測對**經過動態壓縮**的音訊效果差（OBS 壓縮器、麥克風內建壓縮）
+- 音量偵測對**經過動態壓縮**的音訊效果差（OBS 壓縮器、麥克風內建壓縮），此時應調高 keyword_hit 權重
+- 關鍵字必須填 whisper **實際輸出的文字**（例如「Alohaございます」→ 聽成「阿羅哈」）
 - 詳見 [ROADMAP.md](ROADMAP.md) 及 [DEV-LOG.md](DEV-LOG.md)
